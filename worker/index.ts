@@ -21,10 +21,12 @@ function stubRequest(url: URL, path: string, init?: RequestInit): Request {
   return new Request(`${url.origin}${path}`, { ...init, headers })
 }
 
-async function parseJson(request: Request): Promise<unknown> {
+export async function parseJson(request: Request): Promise<unknown> {
   const length = Number(request.headers.get('content-length') ?? 0)
   if (length > 200_000) throw new Error('payload_too_large')
-  return request.json()
+  const body = await request.text()
+  if (new TextEncoder().encode(body).byteLength > 200_000) throw new Error('payload_too_large')
+  return JSON.parse(body)
 }
 
 async function api(request: Request, env: Env, url: URL): Promise<Response | null> {

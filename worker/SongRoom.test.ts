@@ -1,10 +1,16 @@
 import { SELF } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import { testPattern, testSongInput } from './test-helpers'
+import { parseJson } from './index'
 
 const origin = 'https://musiccore.test'
 
 describe('public song rooms', () => {
+  it('bounds bodies even when Content-Length is absent', async () => {
+    const request = new Request(`${origin}/api/songs`, { method: 'POST', body: JSON.stringify({ padding: 'x'.repeat(200_001) }) })
+    expect(request.headers.get('content-length')).toBeNull()
+    await expect(parseJson(request)).rejects.toThrow('payload_too_large')
+  })
   it('creates, reads, and updates a song with optimistic revisions', async () => {
     const createdResponse = await SELF.fetch(`${origin}/api/songs`, {
       method: 'POST',
@@ -48,6 +54,13 @@ describe('public song rooms', () => {
       body: JSON.stringify({ ...testSongInput(), title: 'x'.repeat(129), pattern: {} }),
     })
     expect(response.status).toBe(400)
+
+    const oversized = await SELF.fetch(`${origin}/api/songs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...testSongInput(), padding: 'x'.repeat(200_001) }),
+    })
+    expect(await oversized.json()).toMatchObject({ error: 'payload_too_large' })
   })
 
   it('persists canonical settings, reusable clips, and ordered arrangement', async () => {
