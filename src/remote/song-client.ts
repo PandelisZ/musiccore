@@ -29,6 +29,15 @@ export interface PublicSong extends SongComposition {
   updatedAt?: string
 }
 
+export interface PublicActivity {
+  id: number
+  action: 'created' | 'updated' | 'control'
+  actor: 'human' | 'mcp'
+  summary: string
+  revision: number
+  createdAt: string
+}
+
 type Fetcher = typeof fetch
 export type SongWrite = SongComposition
 export type SongUpdate = SongComposition & { expectedRevision: number }
@@ -53,6 +62,12 @@ export async function getSong(slug: string, fetcher: Fetcher = fetch): Promise<P
   const response = await fetcher(`/api/songs/${encodeURIComponent(slug)}`)
   if (!response.ok) throw new Error(response.status === 404 ? 'Public song not found.' : `Loading failed (${response.status})`)
   return read(response)
+}
+
+export async function getSongActivity(slug: string, fetcher: Fetcher = fetch): Promise<PublicActivity[]> {
+  const response = await fetcher(`/api/songs/${encodeURIComponent(slug)}/activity`)
+  if (!response.ok) throw new Error(`Loading activity failed (${response.status})`)
+  return (await response.json() as { activity: PublicActivity[] }).activity
 }
 
 export async function updateSong(slug: string, input: SongUpdate, fetcher: Fetcher = fetch): Promise<PublicSong> {
