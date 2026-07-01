@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Pattern } from '../domain/pattern'
 import type { InstrumentSettings } from '../features/controls/MusicalControls'
-import { createSong, getSong, SongConflictError, songSocketUrl, updateSong, type PublicSong } from './song-client'
+import { createSong, getSong, SongConflictError, songSocketUrl, updateSong, type PublicSong, type SongComposition } from './song-client'
 
 export type RemoteCommand =
   | { command: 'play'; atStep?: number }
@@ -54,10 +54,20 @@ export function usePublicSong({ slug: initialSlug, pattern, settings, onSnapshot
   const publish = async () => {
     setError(''); setStatus('Publishing…')
     try {
-      const composition = {
-        title: song?.title ?? 'Musiccore loop', pattern, bpm: settings.bpm,
-        timeSignature: song?.timeSignature ?? { numerator: 4, denominator: 4 },
-        bars: song?.bars ?? 1, key: settings.key, scale: settings.scale,
+      const composition: SongComposition = {
+        title: song?.title ?? 'Musiccore loop', pattern,
+        settings: {
+          bpm: settings.bpm,
+          timeSignature: song?.settings.timeSignature ?? { numerator: 4, denominator: 4 },
+          subdivision: song?.settings.subdivision ?? 16,
+          loop: song?.settings.loop ?? { startBar: 0, endBar: 1 },
+          key: settings.key,
+          scale: settings.scale,
+          swing: settings.swing,
+        },
+        clips: song?.clips.length
+          ? song.clips.map((clip) => clip.id === 'main' ? { ...clip, pattern } : clip)
+          : [{ id: 'main', name: 'Main loop', pattern }],
         arrangement: song?.arrangement ?? [],
       }
       const next = song

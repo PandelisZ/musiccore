@@ -1,21 +1,37 @@
 import type { Pattern } from '../domain/pattern'
 
-export interface PublicSong {
+export interface SongSettings {
+  bpm: number
+  timeSignature: { numerator: number; denominator: 2 | 4 | 8 | 16 }
+  subdivision: 4 | 8 | 16 | 32
+  loop: { startBar: number; endBar: number }
+  key: 'C' | 'C#' | 'D' | 'D#' | 'E' | 'F' | 'F#' | 'G' | 'G#' | 'A' | 'A#' | 'B'
+  scale: 'major' | 'minor' | 'dorian' | 'mixolydian' | 'pentatonic'
+  swing: number
+}
+
+export interface SongClip { id: string; name: string; pattern: Pattern }
+export interface SongSection { id: string; name: string; clipId: string; bars: number; repeats: number }
+
+export interface SongComposition {
+  pattern: Pattern
+  title: string
+  settings: SongSettings
+  clips: SongClip[]
+  arrangement: SongSection[]
+}
+
+export interface PublicSong extends SongComposition {
   slug: string
   revision: number
-  pattern: Pattern
-  title?: string
   publicUrl?: string
-  bpm: number
-  timeSignature: { numerator: number; denominator: number }
-  bars: number
-  key: string
-  scale: string
-  arrangement: Array<{ id: string; name: string; bars: number; pattern: Pattern }>
+  createdAt?: string
+  updatedAt?: string
 }
 
 type Fetcher = typeof fetch
-export type SongWrite = Omit<PublicSong, 'slug' | 'revision' | 'publicUrl' | 'createdAt' | 'updatedAt'> & { expectedRevision?: number }
+export type SongWrite = SongComposition
+export type SongUpdate = SongComposition & { expectedRevision: number }
 
 export class SongConflictError extends Error {
   readonly current: PublicSong
@@ -39,7 +55,7 @@ export async function getSong(slug: string, fetcher: Fetcher = fetch): Promise<P
   return read(response)
 }
 
-export async function updateSong(slug: string, input: SongWrite, fetcher: Fetcher = fetch): Promise<PublicSong> {
+export async function updateSong(slug: string, input: SongUpdate, fetcher: Fetcher = fetch): Promise<PublicSong> {
   const response = await fetcher(`/api/songs/${encodeURIComponent(slug)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
   if (response.status === 409) {
     const payload = await response.json() as Partial<PublicSong> & { current?: PublicSong }

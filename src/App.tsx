@@ -58,9 +58,10 @@ function App({ audioEngine }: AppProps) {
     setSettings((current) => {
       const next = {
       ...current,
-      bpm: remote.bpm,
-      key: remote.key as InstrumentSettings['key'],
-      scale: remote.scale as InstrumentSettings['scale'],
+      bpm: remote.settings.bpm,
+      swing: remote.settings.swing,
+      key: remote.settings.key,
+      scale: remote.settings.scale,
       }
       transportRef.current?.setSettings({ bpm: next.bpm, swing: next.swing })
       return next
@@ -87,7 +88,7 @@ function App({ audioEngine }: AppProps) {
   const handleToggle = (trackId: TrackId, step: number) => setPattern((current) => { const next = toggleStep(current, trackId, step); transportRef.current?.setPattern(next); return next })
   const updateSettings = (next: InstrumentSettings) => { setSettings(next); transportRef.current?.setSettings({ bpm: next.bpm, swing: next.swing }) }
   const arrangement = publicSession.song?.arrangement
-  const bars = publicSession.song?.bars ?? 1
+  const bars = publicSession.song ? publicSession.song.settings.loop.endBar - publicSession.song.settings.loop.startBar : 1
 
   return (
     <main className="instrument-shell">
@@ -106,8 +107,8 @@ function App({ audioEngine }: AppProps) {
       <PublicSessionBar {...publicSession} onPublish={publicSession.publish} />
       <MusicalControls settings={settings} onChange={updateSettings} />
       {audioError ? <p className="inline-error" role="alert">{audioError}</p> : null}
-      <div className="timing-strip"><span>16 STEPS</span><span>{publicSession.song?.timeSignature.numerator ?? 4}/{publicSession.song?.timeSignature.denominator ?? 4} TIME</span><span>1/16 NOTE</span><span>{bars} BAR LOOP</span></div>
-      {arrangement?.length ? <nav className="arrangement" aria-label="Song arrangement">{arrangement.map((section) => <span key={section.id}><strong>{section.name}</strong>{section.bars} bars</span>)}</nav> : null}
+      <div className="timing-strip"><span>16 STEPS</span><span>{publicSession.song?.settings.timeSignature.numerator ?? 4}/{publicSession.song?.settings.timeSignature.denominator ?? 4} TIME</span><span>1/{publicSession.song?.settings.subdivision ?? 16} NOTE</span><span>{bars} BAR LOOP</span></div>
+      {arrangement?.length ? <nav className="arrangement" aria-label="Song arrangement">{arrangement.map((section) => <span key={section.id}><strong>{section.name}</strong>{section.bars} bars × {section.repeats}</span>)}</nav> : null}
       <Sequencer pattern={pattern} activeStep={activeStep} onToggle={handleToggle} />
       <MusicVisualizer activeStep={activeStep} energy={energy} />
       <footer className="status-footer">
