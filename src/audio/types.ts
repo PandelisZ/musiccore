@@ -5,6 +5,20 @@ export interface TransportSettings {
   swing: number
 }
 
+export function validateTransportSettings(value: unknown): value is TransportSettings {
+  if (typeof value !== 'object' || value === null) return false
+  const settings = value as Record<string, unknown>
+  return (
+    typeof settings.bpm === 'number' &&
+    Number.isFinite(settings.bpm) &&
+    settings.bpm > 0 &&
+    typeof settings.swing === 'number' &&
+    Number.isFinite(settings.swing) &&
+    settings.swing >= 0 &&
+    settings.swing <= 1
+  )
+}
+
 export interface AudioEngine {
   currentTime(): number
   start(): Promise<void>

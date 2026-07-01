@@ -67,8 +67,15 @@ function isTrackId(value: unknown): value is TrackId {
   return typeof value === 'string' && (TRACK_IDS as readonly string[]).includes(value)
 }
 
-function isStep(value: unknown): value is Step {
+function isStep(value: unknown, trackId: TrackId): value is Step {
   if (!isRecord(value)) return false
+
+  const hasValidNote =
+    value.note === undefined ||
+    (typeof value.note === 'number' &&
+      Number.isInteger(value.note) &&
+      value.note >= 0 &&
+      value.note <= 127)
 
   return (
     typeof value.active === 'boolean' &&
@@ -76,7 +83,8 @@ function isStep(value: unknown): value is Step {
     Number.isFinite(value.velocity) &&
     value.velocity >= 0 &&
     value.velocity <= 1 &&
-    (value.note === undefined || (typeof value.note === 'number' && Number.isFinite(value.note)))
+    hasValidNote &&
+    (!value.active || trackId === 'drums' || value.note !== undefined)
   )
 }
 
@@ -88,14 +96,15 @@ export function validatePattern(value: unknown): value is Pattern {
   const trackIds = new Set<TrackId>()
   for (const track of value.tracks) {
     if (!isRecord(track) || !isTrackId(track.id) || trackIds.has(track.id)) return false
+    const trackId = track.id
     if (
       !Array.isArray(track.steps) ||
       track.steps.length !== STEPS_PER_TRACK ||
-      !track.steps.every(isStep)
+      !track.steps.every((step) => isStep(step, trackId))
     ) {
       return false
     }
-    trackIds.add(track.id)
+    trackIds.add(trackId)
   }
 
   return TRACK_IDS.every((trackId) => trackIds.has(trackId))

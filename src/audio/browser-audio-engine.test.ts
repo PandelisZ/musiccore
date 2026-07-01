@@ -20,7 +20,7 @@ function createAudioContext() {
     createOscillator: () => {
       const oscillator = {
         type: 'sine' as OscillatorType,
-        frequency: { setValueAtTime: vi.fn() },
+        frequency: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
         connect: vi.fn(),
         start: vi.fn((when: number) => starts.push(when)),
         stop: vi.fn((when: number) => stops.push(when)),
@@ -62,8 +62,8 @@ describe('BrowserAudioEngine', () => {
     engine.scheduleVoice('melody', { active: true, velocity: 0.7, note: 69 }, 5.2)
 
     expect(starts).toEqual([5, 5.1, 5.2])
-    expect(oscillators.map((oscillator) => oscillator.type)).toEqual(['sawtooth', 'triangle'])
-    expect(oscillators[1].frequency.setValueAtTime).toHaveBeenCalledWith(440, 5.2)
+    expect(oscillators.map((oscillator) => oscillator.type)).toEqual(['sine', 'sawtooth', 'triangle'])
+    expect(oscillators[2].frequency.setValueAtTime).toHaveBeenCalledWith(440, 5.2)
   })
 
   it('stops voices and closes the context during cleanup', async () => {
@@ -75,5 +75,20 @@ describe('BrowserAudioEngine', () => {
     expect(stops.at(-1)).toBe(4)
     engine.cleanup()
     expect(context.close).toHaveBeenCalledOnce()
+  })
+
+  it('maps GM kick, snare, and closed hat notes to distinct drum voices', async () => {
+    const { context, oscillators } = createAudioContext()
+    const engine = new BrowserAudioEngine(() => context)
+    await engine.start()
+
+    engine.scheduleVoice('drums', { active: true, velocity: 1, note: 36 }, 5)
+    engine.scheduleVoice('drums', { active: true, velocity: 1, note: 38 }, 5.1)
+    engine.scheduleVoice('drums', { active: true, velocity: 1, note: 42 }, 5.2)
+
+    expect(oscillators[0].type).toBe('sine')
+    expect(oscillators[0].frequency.setValueAtTime).toHaveBeenCalledWith(150, 5)
+    expect(context.createBuffer).toHaveBeenNthCalledWith(1, 1, 3528, 44100)
+    expect(context.createBuffer).toHaveBeenNthCalledWith(2, 1, 1323, 44100)
   })
 })

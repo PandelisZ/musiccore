@@ -52,4 +52,37 @@ describe('pattern', () => {
     expect(validatePattern(invalidStep)).toBe(false)
     expect(validatePattern(null)).toBe(false)
   })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 128, 60.5])(
+    'rejects hostile MIDI note value %s',
+    (note) => {
+      const invalid = structuredClone(createEmptyPattern())
+      invalid.tracks[0].steps[0].note = note
+
+      expect(validatePattern(invalid)).toBe(false)
+    },
+  )
+
+  it('accepts the inclusive MIDI boundaries', () => {
+    const pattern = structuredClone(createEmptyPattern())
+    pattern.tracks[0].steps[0].note = 0
+    pattern.tracks[0].steps[1].note = 127
+
+    expect(validatePattern(pattern)).toBe(true)
+  })
+
+  it.each(['bass', 'melody'] as const)('requires active %s steps to have a MIDI note', (trackId) => {
+    const invalid = structuredClone(createEmptyPattern())
+    const track = invalid.tracks.find((candidate) => candidate.id === trackId)!
+    track.steps[0] = { active: true, velocity: 1 }
+
+    expect(validatePattern(invalid)).toBe(false)
+  })
+
+  it('allows an active drum step to omit its optional note', () => {
+    const pattern = structuredClone(createEmptyPattern())
+    pattern.tracks[0].steps[0] = { active: true, velocity: 1 }
+
+    expect(validatePattern(pattern)).toBe(true)
+  })
 })

@@ -16,7 +16,7 @@ interface SourceLike {
 
 interface OscillatorLike extends SourceLike {
   type: OscillatorType
-  frequency: Pick<AudioParamLike, 'setValueAtTime'>
+  frequency: AudioParamLike
 }
 
 interface GainLike {
@@ -102,12 +102,24 @@ export class BrowserAudioEngine implements AudioEngine {
   }
 
   private scheduleDrum(context: AudioContextLike, step: Step, when: number): void {
-    const duration = 0.08
+    const note = step.note ?? 36
+    if (note === 35 || note === 36) {
+      const oscillator = context.createOscillator()
+      oscillator.type = 'sine'
+      oscillator.frequency.setValueAtTime(150, when)
+      oscillator.frequency.exponentialRampToValueAtTime(48, when + 0.12)
+      this.connectEnvelope(context, oscillator, step.velocity, when, 0.14)
+      return
+    }
+
+    const isSnare = note === 38 || note === 40
+    const duration = isSnare ? 0.08 : 0.03
     const frameCount = Math.max(1, Math.floor(context.sampleRate * duration))
     const buffer = context.createBuffer(1, frameCount, context.sampleRate)
     const samples = buffer.getChannelData(0)
     for (let index = 0; index < samples.length; index += 1) {
-      samples[index] = (Math.random() * 2 - 1) * (1 - index / samples.length)
+      const decay = 1 - index / samples.length
+      samples[index] = (Math.random() * 2 - 1) * (isSnare ? decay : decay * decay)
     }
     const source = context.createBufferSource()
     source.buffer = buffer
