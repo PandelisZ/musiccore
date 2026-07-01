@@ -7,14 +7,22 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "vitest run",
+    "test": "vitest run --exclude 'worker/**/*.test.ts'",
+    "test:worker": "vitest run --config vitest.worker.config.ts",
+    "typecheck:worker": "wrangler types && tsc -p tsconfig.worker.json",
+    "deploy": "npm run build && wrangler deploy",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.17.3",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.17.0",
+    "@cloudflare/workers-types": "^4.20260701.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -26,6 +34,7 @@
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "wrangler": "^4.106.0"
   }
 }
