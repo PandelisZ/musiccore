@@ -252,3 +252,93 @@ Open the Vite app in the in-app browser, exercise generate/edit/play/tempo/stop/
 - [ ] **Step 5: Final commit**
 
 Commit: `git add . && git commit -m 'test: verify musiccore end to end'`
+
+### Task 7: Cloudflare song storage, WebSockets, and MIDI
+
+**Files:**
+- Create: `wrangler.jsonc`, `worker/index.ts`, `worker/SongRoom.ts`, `worker/schema.ts`, `worker/midi.ts`
+- Create: `worker/SongRoom.test.ts`, `worker/midi.test.ts`, `vitest.worker.config.ts`
+- Modify: `package.json`
+
+- [ ] **Step 1: Install Cloudflare runtime and test dependencies**
+
+Run: `npm install agents @modelcontextprotocol/sdk zod && npm install -D wrangler @cloudflare/workers-types @cloudflare/vitest-pool-workers`
+Expected: lockfile resolves without peer dependency errors.
+
+- [ ] **Step 2: Write failing Worker tests**
+
+Test create/read/update with `expectedRevision`, stale-write 409 behavior, persisted reload, two-client WebSocket broadcast, and a MIDI response beginning with `MThd`.
+
+- [ ] **Step 3: Confirm Worker test failure**
+
+Run: `npx vitest run --config vitest.worker.config.ts`
+Expected: FAIL because Worker modules do not exist.
+
+- [ ] **Step 4: Implement the Worker and `SongRoom` Durable Object**
+
+Use `env.SONGS.getByName(slug)` and a SQLite-backed `SongRoom`. Persist canonical song/revision/events before broadcasting. Use `this.ctx.acceptWebSocket(server)` and hibernation event handlers. Route `POST /api/songs`, `GET|PUT /api/songs/:slug`, `GET /api/songs/:slug/midi`, and `GET /ws/:slug`. Enforce high-entropy slugs, strict size-bounded Zod schemas, and optimistic revisions.
+
+- [ ] **Step 5: Verify and commit**
+
+Run: `npx wrangler types && npm test -- --run && npx vitest run --config vitest.worker.config.ts && npm run build && npm run lint`
+Expected: all checks PASS.
+
+Commit: `git add . && git commit -m 'feat: add durable public song rooms'`
+
+### Task 8: Public Streamable HTTP MCP
+
+**Files:**
+- Create: `worker/mcp.ts`, `worker/mcp.test.ts`
+- Modify: `worker/index.ts`, `README.md`
+
+- [ ] **Step 1: Write failing MCP protocol tests**
+
+Initialize `/mcp`, list tools, call `create_song`, call `get_song`, update with the returned revision, and assert the public URL and canonical pattern are returned.
+
+- [ ] **Step 2: Confirm MCP test failure**
+
+Run: `npx vitest run --config vitest.worker.config.ts worker/mcp.test.ts`
+Expected: FAIL because `/mcp` is not implemented.
+
+- [ ] **Step 3: Implement stateless MCP per request**
+
+Create a fresh `McpServer` and `createMcpHandler()` for every request. Expose `create_song`, `get_song`, `update_song`, `mutate_song`, and `publish_song` using the same Durable Object RPC and schemas. Add concise server instructions covering the compose/edit/revision/publish workflow. Keep the endpoint deliberately authless and do not broadcast private reasoning.
+
+- [ ] **Step 4: Verify and commit**
+
+Run: `npm test -- --run && npx vitest run --config vitest.worker.config.ts && npm run build && npm run lint`
+Expected: PASS.
+
+Commit: `git add worker README.md && git commit -m 'feat: expose public musiccore MCP'`
+
+### Task 9: Public song client, Codex skill, deployment, and end-to-end proof
+
+**Files:**
+- Create: `src/remote/songClient.ts`, `src/remote/useSongRoom.ts`, `skills/musiccore/SKILL.md`, `.codex/config.toml`
+- Modify: `src/App.tsx`, `package.json`, `README.md`
+- Create: `e2e/published-song.spec.ts`
+
+- [ ] **Step 1: Write failing client and browser tests**
+
+Test publish returns and navigates to `/s/:slug`, remote snapshot loads, a WebSocket revision replaces local state, stale saves surface a conflict, and two pages converge after one edit.
+
+- [ ] **Step 2: Implement public session client and UI**
+
+Add Publish/Copy URL status without displacing the instrument. Load slugs from the pathname, reconnect WebSockets with snapshot refresh, debounce bounded writes, and display public/authless status clearly.
+
+- [ ] **Step 3: Add Codex integration artifacts**
+
+Write a project skill that teaches Codex to use MCP tools to create, iteratively edit, and publish a song. Add a project-scoped example `.codex/config.toml` entry with the deployed Streamable HTTP `/mcp` URL after deployment.
+
+- [ ] **Step 4: Verify Cloudflare authentication and deploy**
+
+Run: `npx wrangler whoami && npm run build && npx wrangler deploy`
+Expected: authenticated account details, successful build, and a deployed workers.dev URL.
+
+- [ ] **Step 5: Verify deployed behavior end to end**
+
+Use the live browser for desktop/mobile instrument workflows. Open one slug in two pages, update through UI and MCP, verify live fan-out and reload persistence, download and inspect MIDI, check console/network errors, and run MCP Inspector/Codex against `/mcp`. Capture the final browser screenshot and compare it directly with `design/musiccore-primary.png` using image inspection.
+
+- [ ] **Step 6: Commit deployment configuration and evidence**
+
+Commit: `git add . && git commit -m 'feat: publish collaborative musiccore on cloudflare'`
