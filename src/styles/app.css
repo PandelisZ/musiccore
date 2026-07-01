@@ -33,6 +33,8 @@
 .arrangement { display: flex; gap: 4px; margin-bottom: 7px; overflow-x: auto; }
 .arrangement span { min-width: 110px; padding: 7px 10px; border: 1px solid var(--line); color: var(--muted); background: var(--panel); font-size: 10px; text-transform: uppercase; }
 .arrangement strong { display: block; color: var(--text); margin-bottom: 3px; }
+.arrangement span.is-current { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.arrangement-progress { margin: -2px 0 7px; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .sequencer { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: #050f17; }
 .step-header, .track-row { display: grid; grid-template-columns: 190px minmax(850px, 1fr); }
 .step-header { min-height: 32px; align-items: center; color: #acb8c0; border-bottom: 1px solid var(--line); font: 700 11px var(--font-display); letter-spacing: 1px; text-transform: uppercase; }

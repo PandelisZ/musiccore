@@ -4,6 +4,7 @@ import { LookAheadTransport } from './audio/transport'
 import type { AudioEngine } from './audio/types'
 import { DeterministicPatternGenerator } from './domain/generator'
 import { clearPattern, createEmptyPattern, toggleStep, validatePattern, type Pattern, type TrackId } from './domain/pattern'
+import { createArrangementTimeline, type ArrangementPosition, type ArrangementTimeline } from './domain/arrangement'
 import { MusicalControls, type InstrumentSettings } from './features/controls/MusicalControls'
 import { PublicSessionBar } from './features/session/PublicSessionBar'
 import { Sequencer } from './features/sequencer/Sequencer'
@@ -29,6 +30,9 @@ function App({ audioEngine }: AppProps) {
   const [settings, setSettings] = useState(INITIAL_SETTINGS)
   const settingsRef = useRef(settings); settingsRef.current = settings
   const [activeStep, setActiveStep] = useState(0)
+  const [arrangementPosition, setArrangementPosition] = useState<ArrangementPosition | null>(null)
+  const timelineRef = useRef<ArrangementTimeline | null>(null)
+  const playheadRef = useRef<number | null>(null)
   const [playing, setPlaying] = useState(false)
   const [audioError, setAudioError] = useState('')
   const engineRef = useRef<AudioEngine>(audioEngine ?? new BrowserAudioEngine())
@@ -37,24 +41,59 @@ function App({ audioEngine }: AppProps) {
     transportRef.current = new LookAheadTransport(engineRef.current, {
       onActiveStep: (step, when) => {
         const delay = Math.max(0, (when - engineRef.current.currentTime()) * 1000)
-        window.setTimeout(() => setActiveStep(step), delay)
+        window.setTimeout(() => {
+          const timeline = timelineRef.current
+          if (timeline) {
+            const position = timeline.atStep(step)
+            playheadRef.current = step
+            setPattern(position.pattern)
+            setActiveStep(position.visibleStep)
+            setArrangementPosition(position)
+          } else setActiveStep(step)
+        }, delay)
       },
     })
   }
 
-  const stop = useCallback(() => { transportRef.current?.stop(); setPlaying(false); setActiveStep(0) }, [])
+  const stop = useCallback(() => { transportRef.current?.stop(); playheadRef.current = null; setPlaying(false); setActiveStep(0); setArrangementPosition(null) }, [])
   const play = useCallback(async (startStep?: number) => {
     setAudioError('')
     try {
-      await transportRef.current?.start(patternRef.current, { bpm: settingsRef.current.bpm, swing: settingsRef.current.swing })
-      if (typeof startStep === 'number') transportRef.current?.seek(startStep % 16)
+      const timeline = timelineRef.current
+      if (timeline) {
+        await transportRef.current?.startSequence({ length: timeline.totalSteps, patternAt: (step) => timeline.atStep(step).pattern }, { bpm: settingsRef.current.bpm, swing: settingsRef.current.swing })
+        const songLoop = songRef.current?.settings.loop ?? { startBar: 0, endBar: timeline.totalBars }
+        const loop = timeline.loopSteps(songLoop)
+        transportRef.current?.setLoopRange(loop.startStep, loop.endStep)
+        transportRef.current?.seek(typeof startStep === 'number' ? startStep : (playheadRef.current ?? loop.startStep))
+      } else {
+        await transportRef.current?.start(patternRef.current, { bpm: settingsRef.current.bpm, swing: settingsRef.current.swing })
+        if (typeof startStep === 'number') transportRef.current?.seek(startStep)
+      }
       setPlaying(true)
     }
     catch { setAudioError('Audio could not start. Check browser sound permissions and try Play again.'); setPlaying(false) }
   }, [])
 
+  const songRef = useRef<PublicSong | null>(null)
+
   const receiveSnapshot = useCallback((remote: PublicSong) => {
-    if (validatePattern(remote.pattern)) { setPattern(remote.pattern); transportRef.current?.setPattern(remote.pattern) }
+    songRef.current = remote
+    if (remote.arrangement.length && remote.clips.length) {
+      try {
+        const timeline = createArrangementTimeline(remote.clips, remote.arrangement)
+        timelineRef.current = timeline
+        const startStep = timeline.loopSteps(remote.settings.loop).startStep
+        const position = timeline.atStep(startStep)
+        playheadRef.current = startStep
+        setPattern(position.pattern); setActiveStep(position.visibleStep); setArrangementPosition(position)
+        transportRef.current?.setSequence({ length: timeline.totalSteps, patternAt: (step) => timeline.atStep(step).pattern })
+        const loop = timeline.loopSteps(remote.settings.loop)
+        transportRef.current?.setLoopRange(loop.startStep, loop.endStep)
+      } catch { timelineRef.current = null }
+    } else if (validatePattern(remote.pattern)) {
+      timelineRef.current = null; setArrangementPosition(null); setPattern(remote.pattern); transportRef.current?.setPattern(remote.pattern)
+    }
     setSettings((current) => {
       const next = {
       ...current,
@@ -68,9 +107,15 @@ function App({ audioEngine }: AppProps) {
     })
   }, [])
   const receiveCommand = useCallback((command: RemoteCommand) => {
-    if (command.command === 'play') { if (typeof command.atStep === 'number') setActiveStep(command.atStep % 16); void play(command.atStep) }
+    if (command.command === 'play') { void play(command.atStep) }
     else if (command.command === 'stop') stop()
-    else if (command.command === 'seek') { transportRef.current?.seek(command.atStep % 16); setActiveStep(command.atStep % 16) }
+    else if (command.command === 'seek') {
+      transportRef.current?.seek(command.atStep)
+      playheadRef.current = command.atStep
+      const timeline = timelineRef.current
+      if (timeline) { const position = timeline.atStep(command.atStep); setPattern(position.pattern); setActiveStep(position.visibleStep); setArrangementPosition(position) }
+      else setActiveStep(command.atStep)
+    }
     else if (command.command === 'tempo') setSettings((current) => { const next = { ...current, bpm: command.bpm }; transportRef.current?.setSettings({ bpm: next.bpm, swing: next.swing }); return next })
   }, [play, stop])
   const slug = useMemo(() => slugFromPath(window.location.pathname), [])
@@ -108,7 +153,8 @@ function App({ audioEngine }: AppProps) {
       <MusicalControls settings={settings} onChange={updateSettings} />
       {audioError ? <p className="inline-error" role="alert">{audioError}</p> : null}
       <div className="timing-strip"><span>16 STEPS</span><span>{publicSession.song?.settings.timeSignature.numerator ?? 4}/{publicSession.song?.settings.timeSignature.denominator ?? 4} TIME</span><span>1/{publicSession.song?.settings.subdivision ?? 16} NOTE</span><span>{bars} BAR LOOP</span></div>
-      {arrangement?.length ? <nav className="arrangement" aria-label="Song arrangement">{arrangement.map((section) => <span key={section.id}><strong>{section.name}</strong>{section.bars} bars × {section.repeats}</span>)}</nav> : null}
+      {arrangement?.length ? <nav className="arrangement" aria-label="Song arrangement">{arrangement.map((section) => <span className={arrangementPosition?.section.id === section.id ? 'is-current' : undefined} key={section.id}><strong>{section.name}</strong>{section.bars} bars × {section.repeats}</span>)}</nav> : null}
+      {arrangementPosition ? <p className="arrangement-progress" aria-live="polite">{arrangementPosition.section.name} · bar {arrangementPosition.sectionBar + 1}/{arrangementPosition.section.bars} · repeat {arrangementPosition.repeat + 1}/{arrangementPosition.section.repeats} · song bar {arrangementPosition.absoluteBar + 1}</p> : null}
       <Sequencer pattern={pattern} activeStep={activeStep} onToggle={handleToggle} />
       <MusicVisualizer activeStep={activeStep} energy={energy} />
       <footer className="status-footer">
