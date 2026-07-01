@@ -15,4 +15,21 @@ describe('public song schema', () => {
     }
     expect(createSongSchema.safeParse(legacy).success).toBe(false)
   })
+
+  it('caps the expanded arrangement at 256 bars', () => {
+    const allowed = testSongInput()
+    allowed.arrangement = [
+      { id: 'a', name: 'A', clipId: 'main', bars: 64, repeats: 4 },
+    ]
+    expect(createSongSchema.safeParse(allowed).success).toBe(true)
+
+    const oversized = testSongInput()
+    oversized.arrangement = [
+      { id: 'a', name: 'A', clipId: 'main', bars: 64, repeats: 4 },
+      { id: 'b', name: 'B', clipId: 'drop', bars: 1, repeats: 1 },
+    ]
+    const result = createSongSchema.safeParse(oversized)
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.error.issues.map(({ message }) => message)).toContain('Arrangement may expand to at most 256 bars')
+  })
 })

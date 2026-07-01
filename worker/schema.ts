@@ -35,18 +35,22 @@ export const timeSignatureSchema = z
   .object({ numerator: z.number().int().min(1).max(12), denominator: z.union([z.literal(2), z.literal(4), z.literal(8), z.literal(16)]) })
   .strict()
 
+const songSettingsFields = {
+  bpm: z.number().int().min(30).max(300),
+  timeSignature: timeSignatureSchema,
+  subdivision: z.union([z.literal(4), z.literal(8), z.literal(16), z.literal(32)]),
+  loop: z.object({ startBar: z.number().int().min(0).max(255), endBar: z.number().int().min(1).max(256) }).strict(),
+  key: musicalKeySchema,
+  scale: musicalScaleSchema,
+  swing: z.number().finite().min(0).max(0.75),
+}
+
 export const songSettingsSchema = z
-  .object({
-    bpm: z.number().int().min(30).max(300),
-    timeSignature: timeSignatureSchema,
-    subdivision: z.union([z.literal(4), z.literal(8), z.literal(16), z.literal(32)]),
-    loop: z.object({ startBar: z.number().int().min(0).max(255), endBar: z.number().int().min(1).max(256) }).strict(),
-    key: musicalKeySchema,
-    scale: musicalScaleSchema,
-    swing: z.number().finite().min(0).max(0.75),
-  })
+  .object(songSettingsFields)
   .strict()
   .refine(({ loop }) => loop.endBar > loop.startBar, 'Loop end must be after loop start')
+
+export const songSettingsPatchSchema = z.object(songSettingsFields).partial().strict()
 
 const idSchema = z.string().min(1).max(32).regex(/^[a-zA-Z0-9_-]+$/)
 
@@ -68,12 +72,19 @@ const compositionFields = {
   arrangement: z.array(sectionSchema).max(32).default([]),
 }
 
-function validateComposition(value: { clips: Array<{ id: string }>; arrangement: Array<{ id: string; clipId: string }> }, context: z.RefinementCtx) {
+export const MAX_ARRANGEMENT_BARS = 256
+export const MAX_EXPANDED_NOTES = MAX_ARRANGEMENT_BARS * 16 * 3
+
+function validateComposition(value: { clips: Array<{ id: string }>; arrangement: Array<{ id: string; clipId: string; bars: number; repeats: number }> }, context: z.RefinementCtx) {
   const clipIds = new Set(value.clips.map(({ id }) => id))
   if (clipIds.size !== value.clips.length) context.addIssue({ code: 'custom', message: 'Clip IDs must be unique' })
   if (new Set(value.arrangement.map(({ id }) => id)).size !== value.arrangement.length) context.addIssue({ code: 'custom', message: 'Section IDs must be unique' })
   for (const section of value.arrangement) {
     if (!clipIds.has(section.clipId)) context.addIssue({ code: 'custom', message: `Unknown clip: ${section.clipId}` })
+  }
+  const expandedBars = value.arrangement.reduce((total, section) => total + section.bars * section.repeats, 0)
+  if (expandedBars > MAX_ARRANGEMENT_BARS) {
+    context.addIssue({ code: 'custom', message: `Arrangement may expand to at most ${MAX_ARRANGEMENT_BARS} bars` })
   }
 }
 
@@ -94,10 +105,27 @@ export type CreateSongInput = z.infer<typeof createSongSchema>
 export type UpdateSongInput = z.infer<typeof updateSongSchema>
 export type ControlEvent = z.infer<typeof controlEventSchema>
 
+export type PublicActivityAction = 'created' | 'updated' | 'control'
+export type PublicActivityActor = 'human' | 'mcp'
+export interface PublicActivity {
+  id: number
+  action: PublicActivityAction
+  actor: PublicActivityActor
+  summary: string
+  revision: number
+  createdAt: string
+}
+
 export interface SongSnapshot extends CreateSongInput {
   slug: string
   revision: number
   createdAt: string
   updatedAt: string
   publicUrl: string
+}
+
+export interface SongRoomSnapshot {
+  type: 'snapshot'
+  song: SongSnapshot
+  activity: PublicActivity[]
 }

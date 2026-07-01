@@ -46,4 +46,30 @@ describe('public stateless MCP', () => {
     expect(toolText(await mcp('tools/call', { name: 'control_playback', arguments: { slug: created.slug, command: 'play', atStep: 0 } }))).toMatchObject({ ok: true })
     expect(toolText(await mcp('tools/call', { name: 'publish_song', arguments: { slug: created.slug } }))).toMatchObject({ publicUrl: created.publicUrl })
   })
+
+  it('requires an explicit step target and supports bounded settings and section edits', async () => {
+    const input = testSongInput()
+    const created = toolText(await mcp('tools/call', { name: 'create_song', arguments: input }))
+
+    const missingTarget = await mcp('tools/call', { name: 'mutate_song', arguments: {
+      slug: created.slug, expectedRevision: 1,
+      mutations: [{ operation: 'set_step', track: 'bass', step: 1, active: true, velocity: 0.9, note: 48 }],
+    } })
+    expect(missingTarget.result.isError).toBe(true)
+
+    const mutated = toolText(await mcp('tools/call', { name: 'mutate_song', arguments: {
+      slug: created.slug, expectedRevision: 1,
+      mutations: [
+        { operation: 'set_step', target: { kind: 'clip', clipId: 'drop' }, track: 'bass', step: 1, active: true, velocity: 0.9, note: 48 },
+        { operation: 'update_settings', settings: { timeSignature: { numerator: 3, denominator: 4 }, subdivision: 8, loop: { startBar: 1, endBar: 6 }, key: 'D', scale: 'dorian' } },
+        { operation: 'update_section', sectionId: 'intro', changes: { name: 'Opening', bars: 3, repeats: 2, clipId: 'main' } },
+      ],
+    } }))
+    expect(mutated).toMatchObject({
+      revision: 2,
+      settings: { timeSignature: { numerator: 3, denominator: 4 }, subdivision: 8, loop: { startBar: 1, endBar: 6 }, key: 'D', scale: 'dorian' },
+    })
+    expect(mutated.arrangement[0]).toMatchObject({ id: 'intro', name: 'Opening', bars: 3, repeats: 2 })
+    expect(mutated.clips.find((clip: any) => clip.id === 'drop').pattern.tracks.find((track: any) => track.id === 'bass').steps[1]).toMatchObject({ active: true, note: 48 })
+  })
 })

@@ -1,7 +1,7 @@
 import { SELF } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import { testPattern, testSongInput } from './test-helpers'
-import { parseJson } from './index'
+import { boundedRequest, parseJson } from './index'
 
 const origin = 'https://musiccore.test'
 
@@ -10,6 +10,35 @@ describe('public song rooms', () => {
     const request = new Request(`${origin}/api/songs`, { method: 'POST', body: JSON.stringify({ padding: 'x'.repeat(200_001) }) })
     expect(request.headers.get('content-length')).toBeNull()
     await expect(parseJson(request)).rejects.toThrow('payload_too_large')
+  })
+
+  it('returns 413 before MCP parsing when Content-Length is absent or lies', async () => {
+    for (const headers of [
+      new Headers({ 'content-type': 'application/json' }),
+      new Headers({ 'content-type': 'application/json', 'content-length': '1' }),
+    ]) {
+      const response = await SELF.fetch(`${origin}/mcp`, {
+        method: 'POST', headers, body: JSON.stringify({ padding: 'x'.repeat(200_001) }),
+      })
+      expect(response.status).toBe(413)
+      expect(await response.json()).toMatchObject({ error: 'payload_too_large' })
+    }
+  })
+
+  it('stops reading an undeclared streaming body once it crosses the cap', async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(150_000))
+        controller.enqueue(new Uint8Array(60_000))
+        controller.enqueue(new Uint8Array(150_000))
+      },
+      cancel() { cancelled = true },
+    })
+    const result = await boundedRequest(new Request(`${origin}/mcp`, { method: 'POST', body }))
+    expect(result).toBeInstanceOf(Response)
+    expect((result as Response).status).toBe(413)
+    expect(cancelled).toBe(true)
   })
   it('creates, reads, and updates a song with optimistic revisions', async () => {
     const createdResponse = await SELF.fetch(`${origin}/api/songs`, {
@@ -154,5 +183,81 @@ describe('public song rooms', () => {
     expect(JSON.parse((await event).data as string)).toMatchObject({ type: 'control', control: { command: 'seek', atStep: 12 } })
     expect(await (await SELF.fetch(`${origin}/api/songs/${created.slug}`)).json()).toMatchObject({ revision: 1 })
     socket.close(1000, 'done')
+  })
+
+  it('rate limits control floods per room', async () => {
+    const created = await (
+      await SELF.fetch(`${origin}/api/songs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(testSongInput()),
+      })
+    ).json<Record<string, any>>()
+    const statuses: number[] = []
+    for (let index = 0; index < 30; index += 1) {
+      statuses.push((await SELF.fetch(`${origin}/api/songs/${created.slug}/control`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ command: 'seek', atStep: index }),
+      })).status)
+    }
+    expect(statuses).toContain(429)
+  })
+
+  it('caps WebSocket viewers per room', async () => {
+    const created = await (
+      await SELF.fetch(`${origin}/api/songs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(testSongInput()),
+      })
+    ).json<Record<string, any>>()
+    const sockets: WebSocket[] = []
+    for (let index = 0; index < 64; index += 1) {
+      const response = await SELF.fetch(`${origin}/ws/${created.slug}`, { headers: { Upgrade: 'websocket' } })
+      expect(response.status).toBe(101)
+      response.webSocket!.accept()
+      sockets.push(response.webSocket!)
+    }
+    const rejected = await SELF.fetch(`${origin}/ws/${created.slug}`, { headers: { Upgrade: 'websocket' } })
+    expect(rejected.status).toBe(429)
+    sockets.forEach((socket) => socket.close(1000, 'done'))
+  })
+
+  it('exposes bounded public activity and includes it in WebSocket snapshots', async () => {
+    const created = await (
+      await SELF.fetch(`${origin}/api/songs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...testSongInput(), title: '<script>private</script>' }),
+      })
+    ).json<Record<string, any>>()
+    await SELF.fetch(`${origin}/api/songs/${created.slug}/control`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ command: 'play', atStep: 0 }),
+    })
+
+    const historyResponse = await SELF.fetch(`${origin}/api/songs/${created.slug}/activity?limit=1`)
+    expect(historyResponse.status).toBe(200)
+    const history = await historyResponse.json<Record<string, any>>()
+    expect(history.activity).toHaveLength(1)
+    expect(history.activity[0]).toMatchObject({ action: 'control', actor: 'human', summary: 'Started playback', revision: 1 })
+    expect(history.activity[0].createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(JSON.stringify(history)).not.toContain('<script>')
+
+    const response = await SELF.fetch(`${origin}/ws/${created.slug}`, { headers: { Upgrade: 'websocket' } })
+    const socket = response.webSocket!
+    const snapshot = new Promise<MessageEvent>((resolve) => socket.addEventListener('message', resolve, { once: true }))
+    socket.accept()
+    expect(JSON.parse((await snapshot).data as string)).toMatchObject({
+      type: 'snapshot',
+      activity: [{ action: 'created' }, { action: 'control', actor: 'human', summary: 'Started playback' }],
+    })
+    socket.close(1000, 'done')
+  })
+
+  it('marks MCP writes as public MCP activity without exposing request arguments', async () => {
+    const created = await (
+      await SELF.fetch(`${origin}/api/songs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-musiccore-actor': 'mcp' },
+        body: JSON.stringify({ ...testSongInput(), title: 'Agent loop' }),
+      })
+    ).json<Record<string, any>>()
+    const history = await (await SELF.fetch(`${origin}/api/songs/${created.slug}/activity`)).json<Record<string, any>>()
+    expect(history.activity[0]).toMatchObject({ action: 'created', actor: 'mcp', summary: 'Created “Agent loop”' })
+    expect(history.activity[0]).not.toHaveProperty('arguments')
+    expect(history.activity[0]).not.toHaveProperty('prompt')
   })
 })

@@ -16,4 +16,17 @@ describe('analyzeSong', () => {
     expect(analysis.energyByBar).toHaveLength(10)
     expect(analysis.asciiWaveform.split('\n')).toHaveLength(3)
   })
+
+  it('summarizes long arrangements into bounded feedback arrays', () => {
+    const song = testSongInput()
+    song.arrangement = [{ id: 'long', name: 'Long', clipId: 'main', bars: 64, repeats: 4 }]
+    const analysis = analyzeSong(song)
+
+    expect(analysis.totalBars).toBe(256)
+    expect(analysis.onsetGrid.length).toBeLessThanOrEqual(64)
+    expect(analysis.energyByBar.length).toBeLessThanOrEqual(64)
+    expect(analysis.pitchContour.bass.length).toBeLessThanOrEqual(256)
+    expect(analysis.asciiWaveform.split('\n').every((line) => line.length <= 80)).toBe(true)
+    expect(JSON.stringify(analysis).length).toBeLessThan(20_000)
+  })
 })

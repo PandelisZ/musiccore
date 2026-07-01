@@ -1,4 +1,4 @@
-import type { CreateSongInput, PatternInput } from './schema'
+import { createSongSchema, type CreateSongInput, type PatternInput } from './schema'
 
 const text = (value: string) => [...new TextEncoder().encode(value)]
 const u16 = (value: number) => [(value >>> 8) & 255, value & 255]
@@ -19,12 +19,28 @@ export function patternToMidi(pattern: PatternInput, bpm: number): Uint8Array
 export function patternToMidi(song: CreateSongInput): Uint8Array
 export function patternToMidi(songOrPattern: CreateSongInput | PatternInput, legacyBpm?: number): Uint8Array {
   const isSong = 'settings' in songOrPattern
+  if (isSong) {
+    createSongSchema.parse({
+      title: songOrPattern.title,
+      pattern: songOrPattern.pattern,
+      settings: songOrPattern.settings,
+      clips: songOrPattern.clips,
+      arrangement: songOrPattern.arrangement,
+    })
+  }
   const bpm = isSong ? songOrPattern.settings.bpm : (legacyBpm ?? 120)
   const basePattern = isSong ? songOrPattern.pattern : songOrPattern
   const clips = isSong ? new Map(songOrPattern.clips.map((clip) => [clip.id, clip.pattern])) : new Map<string, PatternInput>()
-  const bars = isSong && songOrPattern.arrangement.length
-    ? songOrPattern.arrangement.flatMap((section) => Array.from({ length: section.bars * section.repeats }, () => clips.get(section.clipId) ?? basePattern))
-    : [basePattern]
+  const bars = function* (): Generator<PatternInput> {
+    if (!isSong || songOrPattern.arrangement.length === 0) {
+      yield basePattern
+      return
+    }
+    for (const section of songOrPattern.arrangement) {
+      const pattern = clips.get(section.clipId) ?? basePattern
+      for (let index = 0; index < section.bars * section.repeats; index += 1) yield pattern
+    }
+  }
   const ticksPerQuarter = 96
   const numerator = isSong ? songOrPattern.settings.timeSignature.numerator : 4
   const denominator = isSong ? songOrPattern.settings.timeSignature.denominator : 4
@@ -37,7 +53,8 @@ export function patternToMidi(songOrPattern: CreateSongInput | PatternInput, leg
       events.push({ tick: 0, order: 0, bytes: [0xff, 0x51, 3, (tempo >>> 16) & 255, (tempo >>> 8) & 255, tempo & 255] })
       events.push({ tick: 0, order: 0, bytes: [0xff, 0x58, 4, numerator, Math.log2(denominator), 24, 8] })
     }
-    bars.forEach((bar, barIndex) => {
+    let barIndex = 0
+    for (const bar of bars()) {
       const track = bar.tracks.find(({ id }) => id === baseTrack.id) ?? baseTrack
       track.steps.forEach((step, index) => {
         if (!step.active) return
@@ -45,11 +62,12 @@ export function patternToMidi(songOrPattern: CreateSongInput | PatternInput, leg
         const channel = track.id === 'drums' ? 9 : trackIndex
         const velocity = Math.max(1, Math.min(127, Math.round(step.velocity * 127)))
         const swingDelay = index % 2 === 1 ? Math.round(stepTicks * swing) : 0
-        const tick = (barIndex * 16 + index) * stepTicks + swingDelay
+        const tick = Math.round((barIndex * 16 + index) * stepTicks + swingDelay)
         events.push({ tick, order: 1, bytes: [0x90 | channel, note, velocity] })
-        events.push({ tick: tick + stepTicks, order: 0, bytes: [0x80 | channel, note, 0] })
+        events.push({ tick: Math.max(tick, Math.round(tick + stepTicks)), order: 0, bytes: [0x80 | channel, note, 0] })
       })
-    })
+      barIndex += 1
+    }
     events.sort((a, b) => a.tick - b.tick || a.order - b.order)
     let previousTick = 0
     const body: number[] = []

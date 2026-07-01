@@ -15,6 +15,14 @@ export interface SongAnalysis {
   summary: string
 }
 
+const MAX_BAR_SAMPLES = 64
+const MAX_CONTOUR_NOTES = 256
+
+function sample<T>(values: T[], limit: number): T[] {
+  if (values.length <= limit) return values
+  return Array.from({ length: limit }, (_, index) => values[Math.floor(index * values.length / limit)])
+}
+
 function arrangedBars(song: CreateSongInput): PatternInput[] {
   if (song.arrangement.length === 0) return [song.pattern]
   const clips = new Map(song.clips.map((clip) => [clip.id, clip.pattern]))
@@ -42,21 +50,24 @@ export function analyzeSong(song: CreateSongInput): SongAnalysis {
     const pitches = activeSteps.flatMap((step) => step.note === undefined ? [] : [step.note])
     density[id] = rounded(activeSteps.length / Math.max(1, steps.length))
     pitchRange[id] = pitches.length ? { min: Math.min(...pitches), max: Math.max(...pitches) } : null
-    contour[id] = pitches
+    contour[id] = sample(pitches, MAX_CONTOUR_NOTES)
     active += activeSteps.length
     syncopated += steps.filter((step, index) => step.active && index % 4 !== 0).length
   }
 
-  const onsetGrid = bars.map((bar) =>
+  const onsetGrid = sample(bars.map((bar) =>
+    Array.from({ length: 16 }, (_, index) => bar.tracks.some((track) => track.steps[index]?.active) ? 'x' : '.').join(''),
+  ), MAX_BAR_SAMPLES)
+  const allOnsetGrids = bars.map((bar) =>
     Array.from({ length: 16 }, (_, index) => bar.tracks.some((track) => track.steps[index]?.active) ? 'x' : '.').join(''),
   )
-  const uniqueBars = new Set(onsetGrid).size
-  const energyByBar = bars.map((bar) => rounded(
+  const uniqueBars = new Set(allOnsetGrids).size
+  const energyByBar = sample(bars.map((bar) => rounded(
     bar.tracks.flatMap((track) => track.steps).reduce((sum, step) => sum + (step.active ? step.velocity : 0), 0) / 48,
-  ))
+  )), MAX_BAR_SAMPLES)
   const levels = ' .:-=+*#%@'
   const asciiWaveform = ids.map((id) => {
-    const line = bars.map((bar) => {
+    const line = sample(bars, MAX_BAR_SAMPLES).map((bar) => {
       const steps = bar.tracks.find((track) => track.id === id)?.steps ?? []
       const energy = steps.reduce((sum, step) => sum + (step.active ? step.velocity : 0), 0) / Math.max(1, steps.length)
       return levels[Math.min(levels.length - 1, Math.round(energy * (levels.length - 1)))]

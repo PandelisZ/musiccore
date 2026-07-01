@@ -29,24 +29,57 @@ export async function parseJson(request: Request): Promise<unknown> {
   return JSON.parse(body)
 }
 
+export async function boundedRequest(request: Request): Promise<Request | Response> {
+  const declaredLength = Number(request.headers.get('content-length') ?? 0)
+  if (declaredLength > 200_000) return error('payload_too_large', 413)
+  if (!request.body) return request
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > 200_000) {
+      await reader.cancel('payload_too_large')
+      return error('payload_too_large', 413)
+    }
+    chunks.push(value)
+  }
+  const body = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    body.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new Request(request, { body })
+}
+
 async function api(request: Request, env: Env, url: URL): Promise<Response | null> {
   if (url.pathname === '/api/songs' && request.method === 'POST') {
     try {
       const input = createSongSchema.parse(await parseJson(request))
       const songSlug = slug()
+      const headers = new Headers(jsonHeaders)
+      if (request.headers.get('x-musiccore-actor') === 'mcp') headers.set('x-musiccore-actor', 'mcp')
       return env.SONGS.getByName(songSlug).fetch(stubRequest(url, '/song', {
-        method: 'POST', body: JSON.stringify({ slug: songSlug, input }), headers: jsonHeaders,
+        method: 'POST', body: JSON.stringify({ slug: songSlug, input }), headers,
       }))
     } catch (cause) {
-      return error(cause instanceof Error && cause.message === 'payload_too_large' ? 'payload_too_large' : 'invalid_request', 400)
+      const oversized = cause instanceof Error && cause.message === 'payload_too_large'
+      return error(oversized ? 'payload_too_large' : 'invalid_request', oversized ? 413 : 400)
     }
   }
 
-  const match = url.pathname.match(/^\/api\/songs\/([^/]+)(?:\/(midi|control))?$/)
+  const match = url.pathname.match(/^\/api\/songs\/([^/]+)(?:\/(midi|control|activity))?$/)
   if (!match) return null
   const parsedSlug = slugSchema.safeParse(match[1])
   if (!parsedSlug.success) return error('invalid_slug', 400)
   const stub = env.SONGS.getByName(parsedSlug.data)
+
+  if (match[2] === 'activity' && request.method === 'GET') {
+    return stub.fetch(stubRequest(url, `/activity${url.search}`))
+  }
 
   if (!match[2] && request.method === 'GET') return stub.fetch(stubRequest(url, '/song'))
   if (!match[2] && request.method === 'PUT') {
@@ -83,8 +116,10 @@ export default {
       return env.SONGS.getByName(parsed.data).fetch(stubRequest(url, '/websocket', request))
     }
     if (url.pathname === '/mcp') {
+      const bounded = await boundedRequest(request)
+      if (bounded instanceof Response) return bounded
       const { handleMcp } = await import('./mcp')
-      return handleMcp(request, env, ctx)
+      return handleMcp(bounded, env, ctx)
     }
     return env.ASSETS.fetch(request)
   },
