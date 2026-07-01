@@ -1,0 +1,14 @@
+:root {
+  --bg: #030b12;
+  --panel: #0a1722;
+  --panel-deep: #07121b;
+  --line: #29404f;
+  --line-soft: #152a36;
+  --text: #f2f6f7;
+  --muted: #8497a4;
+  --coral: #ff6453;
+  --lime: #c9ef25;
+  --cyan: #48d6e8;
+  --radius: 5px;
+  --font-display: "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
+}
