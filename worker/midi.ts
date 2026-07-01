@@ -15,6 +15,11 @@ function midiTrack(events: number[]): number[] {
   return [...text('MTrk'), ...u32(body.length), ...body]
 }
 
+function marker(value: string): number[] {
+  const bytes = text(value)
+  return [0xff, 0x06, ...variableLength(bytes.length), ...bytes]
+}
+
 export function patternToMidi(pattern: PatternInput, bpm: number): Uint8Array
 export function patternToMidi(song: CreateSongInput): Uint8Array
 export function patternToMidi(songOrPattern: CreateSongInput | PatternInput, legacyBpm?: number): Uint8Array {
@@ -44,7 +49,8 @@ export function patternToMidi(songOrPattern: CreateSongInput | PatternInput, leg
   const ticksPerQuarter = 96
   const numerator = isSong ? songOrPattern.settings.timeSignature.numerator : 4
   const denominator = isSong ? songOrPattern.settings.timeSignature.denominator : 4
-  const stepTicks = ticksPerQuarter * numerator * (4 / denominator) / 16
+  const subdivision = isSong ? songOrPattern.settings.subdivision : 16
+  const stepTicks = ticksPerQuarter * 4 / subdivision
   const swing = isSong ? songOrPattern.settings.swing : 0
   const tempo = Math.round(60_000_000 / bpm)
   const tracks = basePattern.tracks.map((baseTrack, trackIndex) => {
@@ -52,6 +58,11 @@ export function patternToMidi(songOrPattern: CreateSongInput | PatternInput, leg
     if (trackIndex === 0) {
       events.push({ tick: 0, order: 0, bytes: [0xff, 0x51, 3, (tempo >>> 16) & 255, (tempo >>> 8) & 255, tempo & 255] })
       events.push({ tick: 0, order: 0, bytes: [0xff, 0x58, 4, numerator, Math.log2(denominator), 24, 8] })
+      if (isSong) {
+        const ticksPerPatternBar = 16 * stepTicks
+        events.push({ tick: Math.round(songOrPattern.settings.loop.startBar * ticksPerPatternBar), order: 0, bytes: marker(`loopStart:${songOrPattern.settings.loop.startBar}`) })
+        events.push({ tick: Math.round(songOrPattern.settings.loop.endBar * ticksPerPatternBar), order: 0, bytes: marker(`loopEnd:${songOrPattern.settings.loop.endBar}`) })
+      }
     }
     let barIndex = 0
     for (const bar of bars()) {

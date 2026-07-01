@@ -33,6 +33,17 @@ describe('patternToMidi', () => {
     expect([...swung]).not.toEqual([...straight])
   })
 
+  it('encodes canonical subdivision timing and loop markers', () => {
+    const song: CreateSongInput = testSongInput()
+    const sixteenthNotes = patternToMidi(song)
+    const eighthNotes = patternToMidi({ ...song, settings: { ...song.settings, subdivision: 8 } })
+    const text = new TextDecoder().decode(sixteenthNotes)
+
+    expect([...eighthNotes]).not.toEqual([...sixteenthNotes])
+    expect(text).toContain('loopStart:0')
+    expect(text).toContain('loopEnd:4')
+  })
+
   it('quantizes fractional absolute ticks to monotonic integer MIDI deltas', () => {
     const song: CreateSongInput = testSongInput()
     song.settings.timeSignature = { numerator: 1, denominator: 16 }
