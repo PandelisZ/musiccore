@@ -141,6 +141,14 @@ export class SongRoom extends DurableObject<Env> {
       if (!this.stored()) return Response.json({ error: 'not_found' }, { status: 404 })
       return Response.json({ activity: this.activity(Number(url.searchParams.get('limit') ?? ACTIVITY_LIMIT)) })
     }
+    if (url.pathname === '/activity' && request.method === 'POST' && actor === 'mcp') {
+      const current = this.stored()
+      if (!current) return Response.json({ error: 'not_found' }, { status: 404 })
+      const { summary } = await request.json<{ summary: string }>()
+      const activity = this.record(current.revision, 'mcp', 'mcp', summary, new Date().toISOString())
+      this.broadcast({ type: 'activity', activity, activities: this.activity() })
+      return Response.json({ ok: true, activity })
+    }
     if (url.pathname === '/control' && request.method === 'POST') {
       const current = this.stored()
       if (!current) return Response.json({ error: 'not_found' }, { status: 404 })

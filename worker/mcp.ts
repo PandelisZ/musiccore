@@ -34,6 +34,12 @@ async function responseJson(response: Response): Promise<Record<string, unknown>
   return body
 }
 
+async function recordMcpActivity(env: Env, origin: string, slug: string, summary: string): Promise<void> {
+  await responseJson(await roomFetch(env, origin, slug, '/activity', {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ summary }),
+  }))
+}
+
 function result(value: unknown) {
   const text = JSON.stringify(value)
   return { content: [{ type: 'text' as const, text }] }
@@ -77,7 +83,11 @@ function createServer(env: Env, origin: string): McpServer {
   server.registerTool('get_song', {
     description: 'Read the latest canonical public song and revision.',
     inputSchema: z.object({ slug: slugSchema }).strict(),
-  }, async ({ slug }) => result(await responseJson(await roomFetch(env, origin, slug, '/song'))))
+  }, async ({ slug }) => {
+    const song = await responseJson(await roomFetch(env, origin, slug, '/song'))
+    await recordMcpActivity(env, origin, slug, 'Inspected the song')
+    return result(song)
+  })
 
   const mcpUpdateSchema = updateSongSchema.extend({ slug: slugSchema })
   server.registerTool('update_song', {
@@ -130,7 +140,9 @@ function createServer(env: Env, origin: string): McpServer {
     inputSchema: z.object({ slug: slugSchema }).strict(),
   }, async ({ slug }) => {
     const song = await responseJson(await roomFetch(env, origin, slug, '/song')) as unknown as SongSnapshot
-    return result(analyzeSong(song))
+    const analysis = analyzeSong(song)
+    await recordMcpActivity(env, origin, slug, 'Analyzed the song')
+    return result(analysis)
   })
 
   server.registerTool('control_playback', {
@@ -146,6 +158,7 @@ function createServer(env: Env, origin: string): McpServer {
     inputSchema: z.object({ slug: slugSchema }).strict(),
   }, async ({ slug }) => {
     const song = await responseJson(await roomFetch(env, origin, slug, '/song'))
+    await recordMcpActivity(env, origin, slug, 'Published the song URL')
     return result({ slug, revision: song.revision, publicUrl: song.publicUrl })
   })
 

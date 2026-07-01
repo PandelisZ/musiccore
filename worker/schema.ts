@@ -105,7 +105,7 @@ export type CreateSongInput = z.infer<typeof createSongSchema>
 export type UpdateSongInput = z.infer<typeof updateSongSchema>
 export type ControlEvent = z.infer<typeof controlEventSchema>
 
-export type PublicActivityAction = 'created' | 'updated' | 'control'
+export type PublicActivityAction = 'created' | 'updated' | 'control' | 'mcp'
 export type PublicActivityActor = 'human' | 'mcp'
 export interface PublicActivity {
   id: number

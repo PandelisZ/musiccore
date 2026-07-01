@@ -31,7 +31,7 @@ export interface PublicSong extends SongComposition {
 
 export interface PublicActivity {
   id: number
-  action: 'created' | 'updated' | 'control'
+  action: 'created' | 'updated' | 'control' | 'mcp'
   actor: 'human' | 'mcp'
   summary: string
   revision: number

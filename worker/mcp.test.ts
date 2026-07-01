@@ -72,4 +72,13 @@ describe('public stateless MCP', () => {
     expect(mutated.arrangement[0]).toMatchObject({ id: 'intro', name: 'Opening', bars: 3, repeats: 2 })
     expect(mutated.clips.find((clip: any) => clip.id === 'drop').pattern.tracks.find((track: any) => track.id === 'bass').steps[1]).toMatchObject({ active: true, note: 48 })
   })
+
+  it('publishes concise MCP inspection activity without tool arguments', async () => {
+    const created = toolText(await mcp('tools/call', { name: 'create_song', arguments: testSongInput() }))
+    await mcp('tools/call', { name: 'analyze_song', arguments: { slug: created.slug } })
+
+    const history = await (await SELF.fetch(`https://musiccore.test/api/songs/${created.slug}/activity`)).json<Record<string, any>>()
+    expect(history.activity.at(-1)).toMatchObject({ action: 'mcp', actor: 'mcp', summary: 'Analyzed the song' })
+    expect(JSON.stringify(history.activity.at(-1))).not.toContain(created.slug)
+  })
 })
