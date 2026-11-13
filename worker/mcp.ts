@@ -8,6 +8,9 @@ import {
   createSongSchema,
   slugSchema,
   updateSongSchema,
+  clipSchema,
+  sectionSchema,
+  songSettingsPatchSchema,
   type SongSnapshot,
 } from './schema'
 
@@ -21,6 +24,7 @@ function secureSlug(): string {
 async function roomFetch(env: Env, origin: string, slug: string, path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers)
   headers.set('x-public-origin', origin)
+  headers.set('x-musiccore-actor', 'mcp')
   return env.SONGS.getByName(slug).fetch(new Request(`${origin}${path}`, { ...init, headers }))
 }
 
@@ -30,16 +34,34 @@ async function responseJson(response: Response): Promise<Record<string, unknown>
   return body
 }
 
+async function recordMcpActivity(env: Env, origin: string, slug: string, summary: string): Promise<void> {
+  await responseJson(await roomFetch(env, origin, slug, '/activity', {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ summary }),
+  }))
+}
+
 function result(value: unknown) {
   const text = JSON.stringify(value)
   return { content: [{ type: 'text' as const, text }] }
 }
 
 const mutationSchema = z.discriminatedUnion('operation', [
-  z.object({ operation: z.literal('set_step'), track: z.enum(['drums', 'bass', 'melody']), step: z.number().int().min(0).max(15), active: z.boolean(), velocity: z.number().min(0).max(1), note: z.number().int().min(0).max(127).optional() }).strict(),
+  z.object({
+    operation: z.literal('set_step'),
+    target: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('base') }).strict(),
+      z.object({ kind: z.literal('clip'), clipId: clipSchema.shape.id }).strict(),
+    ]),
+    track: z.enum(['drums', 'bass', 'melody']), step: z.number().int().min(0).max(15), active: z.boolean(), velocity: z.number().min(0).max(1), note: z.number().int().min(0).max(127).optional(),
+  }).strict(),
   z.object({ operation: z.literal('set_tempo'), bpm: z.number().int().min(30).max(300) }).strict(),
   z.object({ operation: z.literal('set_swing'), swing: z.number().min(0).max(0.75) }).strict(),
   z.object({ operation: z.literal('transpose'), semitones: z.number().int().min(-24).max(24) }).strict(),
+  z.object({ operation: z.literal('update_settings'), settings: songSettingsPatchSchema.refine((value) => Object.keys(value).length > 0, 'At least one setting is required') }).strict(),
+  z.object({
+    operation: z.literal('update_section'), sectionId: sectionSchema.shape.id,
+    changes: sectionSchema.omit({ id: true }).partial().refine((value) => Object.keys(value).length > 0, 'At least one section change is required'),
+  }).strict(),
 ])
 
 function createServer(env: Env, origin: string): McpServer {
@@ -61,7 +83,11 @@ function createServer(env: Env, origin: string): McpServer {
   server.registerTool('get_song', {
     description: 'Read the latest canonical public song and revision.',
     inputSchema: z.object({ slug: slugSchema }).strict(),
-  }, async ({ slug }) => result(await responseJson(await roomFetch(env, origin, slug, '/song'))))
+  }, async ({ slug }) => {
+    const song = await responseJson(await roomFetch(env, origin, slug, '/song'))
+    await recordMcpActivity(env, origin, slug, 'Inspected the song')
+    return result(song)
+  })
 
   const mcpUpdateSchema = updateSongSchema.extend({ slug: slugSchema })
   server.registerTool('update_song', {
@@ -72,7 +98,7 @@ function createServer(env: Env, origin: string): McpServer {
   }))))
 
   server.registerTool('mutate_song', {
-    description: 'Apply bounded step, tempo, swing, or transpose edits against an expected revision.',
+    description: 'Apply bounded targeted step, settings, section, tempo, swing, or transpose edits against an expected revision.',
     inputSchema: z.object({ slug: slugSchema, expectedRevision: z.number().int().min(1), mutations: z.array(mutationSchema).min(1).max(64) }).strict(),
   }, async ({ slug, expectedRevision, mutations }) => {
     const current = await responseJson(await roomFetch(env, origin, slug, '/song')) as unknown as SongSnapshot
@@ -80,6 +106,12 @@ function createServer(env: Env, origin: string): McpServer {
     for (const mutation of mutations) {
       if (mutation.operation === 'set_tempo') next.settings.bpm = mutation.bpm
       if (mutation.operation === 'set_swing') next.settings.swing = mutation.swing
+      if (mutation.operation === 'update_settings') next.settings = { ...next.settings, ...mutation.settings }
+      if (mutation.operation === 'update_section') {
+        const section = next.arrangement.find(({ id }) => id === mutation.sectionId)
+        if (!section) throw new Error(`Unknown section: ${mutation.sectionId}`)
+        Object.assign(section, mutation.changes)
+      }
       if (mutation.operation === 'transpose') {
         for (const pattern of [next.pattern, ...next.clips.map(({ pattern }) => pattern)]) {
           for (const track of pattern.tracks) if (track.id !== 'drums') {
@@ -88,7 +120,12 @@ function createServer(env: Env, origin: string): McpServer {
         }
       }
       if (mutation.operation === 'set_step') {
-        const step = next.pattern.tracks.find(({ id }) => id === mutation.track)!.steps[mutation.step]
+        const targetClipId = mutation.target.kind === 'clip' ? mutation.target.clipId : null
+        const targetPattern = targetClipId === null
+          ? next.pattern
+          : next.clips.find(({ id }) => id === targetClipId)?.pattern
+        if (!targetPattern) throw new Error(`Unknown clip: ${targetClipId ?? ''}`)
+        const step = targetPattern.tracks.find(({ id }) => id === mutation.track)!.steps[mutation.step]
         Object.assign(step, { active: mutation.active, velocity: mutation.velocity, ...(mutation.note === undefined ? {} : { note: mutation.note }) })
       }
     }
@@ -103,7 +140,9 @@ function createServer(env: Env, origin: string): McpServer {
     inputSchema: z.object({ slug: slugSchema }).strict(),
   }, async ({ slug }) => {
     const song = await responseJson(await roomFetch(env, origin, slug, '/song')) as unknown as SongSnapshot
-    return result(analyzeSong(song))
+    const analysis = analyzeSong(song)
+    await recordMcpActivity(env, origin, slug, 'Analyzed the song')
+    return result(analysis)
   })
 
   server.registerTool('control_playback', {
@@ -119,6 +158,7 @@ function createServer(env: Env, origin: string): McpServer {
     inputSchema: z.object({ slug: slugSchema }).strict(),
   }, async ({ slug }) => {
     const song = await responseJson(await roomFetch(env, origin, slug, '/song'))
+    await recordMcpActivity(env, origin, slug, 'Published the song URL')
     return result({ slug, revision: song.revision, publicUrl: song.publicUrl })
   })
 

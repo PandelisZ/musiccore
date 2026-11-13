@@ -128,4 +128,34 @@ describe('LookAheadTransport', () => {
     expect(() => transport.setLoopRange(8, 8)).toThrow(RangeError)
     expect(() => transport.seek(16)).toThrow(RangeError)
   })
+
+  it('schedules different clips across an absolute long-form timeline and seeks without truncation', async () => {
+    const { engine, transport, activeSteps, tick, setNow } = setup()
+    const verse = structuredClone(pattern)
+    verse.tracks[0].steps[0].velocity = 0.25
+    await transport.startSequence({
+      length: 48,
+      patternAt: (absoluteStep) => absoluteStep < 16 ? pattern : verse,
+    }, { bpm: 600, swing: 0 })
+
+    const beforeSeek = activeSteps.length
+    transport.seek(32)
+    expect(activeSteps.slice(beforeSeek)).toContain(32)
+    expect(engine.scheduleVoice).toHaveBeenCalledWith('drums', verse.tracks[0].steps[0], expect.any(Number))
+    setNow(11.5)
+    tick()
+    expect(activeSteps.some((step) => step > 32)).toBe(true)
+  })
+
+  it('wraps an absolute sequence inside its configured long-form loop', async () => {
+    const { transport, activeSteps, tick, setNow } = setup()
+    await transport.startSequence({ length: 80, patternAt: () => pattern }, { bpm: 600, swing: 0 })
+    transport.setLoopRange(16, 64)
+    const beforeSeek = activeSteps.length
+    transport.seek(63)
+    expect(activeSteps.slice(beforeSeek)).toEqual(expect.arrayContaining([63, 16]))
+    setNow(10.4)
+    tick()
+    expect(activeSteps.every((step) => step >= 0 && step < 80)).toBe(true)
+  })
 })

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Pattern } from '../domain/pattern'
 import type { InstrumentSettings } from '../features/controls/MusicalControls'
-import { createSong, getSong, SongConflictError, songSocketUrl, updateSong, type PublicSong, type SongComposition } from './song-client'
+import { createSong, getSong, getSongActivity, SongConflictError, songSocketUrl, updateSong, type PublicActivity, type PublicSong, type SongComposition } from './song-client'
 
 export type RemoteCommand =
   | { command: 'play'; atStep?: number }
@@ -22,20 +22,28 @@ export function usePublicSong({ slug: initialSlug, pattern, settings, onSnapshot
   const [song, setSong] = useState<PublicSong | null>(null)
   const [status, setStatus] = useState(initialSlug ? 'Connecting…' : 'Local draft')
   const [error, setError] = useState('')
+  const [activity, setActivity] = useState<PublicActivity[]>([])
   const latestRevision = useRef(0)
 
   useEffect(() => {
     if (!slug) return
     let closed = false
     let socket: WebSocket | undefined
-    getSong(slug).then((loaded) => {
+    Promise.all([getSong(slug), getSongActivity(slug)]).then(([loaded, initialActivity]) => {
       if (closed) return
+      setActivity(initialActivity)
       latestRevision.current = loaded.revision
       setSong(loaded); onSnapshot(loaded); setStatus('Public · live read/write')
       socket = new WebSocket(songSocketUrl(slug))
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(String(event.data)) as Record<string, unknown>
+          const activities = (message.activities ?? (Array.isArray(message.activity) ? message.activity : undefined)) as PublicActivity[] | undefined
+          if (activities) setActivity(activities)
+          else if (message.activity && typeof message.activity === 'object') {
+            const latest = message.activity as PublicActivity
+            setActivity((current) => [...current.filter(({ id }) => id !== latest.id), latest].slice(-100))
+          }
           const candidate = (message.song ?? message.snapshot ?? message) as Partial<PublicSong>
           if (candidate.pattern && typeof candidate.revision === 'number' && candidate.revision > latestRevision.current) {
             const next = { ...loaded, ...candidate } as PublicSong
@@ -86,5 +94,5 @@ export function usePublicSong({ slug: initialSlug, pattern, settings, onSnapshot
     }
   }
 
-  return { song, status, error, publish }
+  return { song, status, error, activity, publish }
 }
